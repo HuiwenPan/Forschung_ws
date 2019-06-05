@@ -15,12 +15,14 @@ STD HEADER
 #include <sstream>
 #include <iostream>
 #include <fstream>
+#include <cmath>
 
 /**************************
 tf HEADER
 **************************/
 #include <tf/transform_broadcaster.h>
 #include <tf/transform_datatypes.h>
+#include <tf/tf.h>
 
 /**************************
 OpenCV HEADER
@@ -59,7 +61,7 @@ class ArucoDetector{
         ros::Subscriber pcl_sub;
         vector<geometry_msgs::PointStamped> center_;
         vector<geometry_msgs::PointStamped> center_3d;
-        vector<tf::Transform> pose_3d_;
+        vector<tf::Transform> pose_3d_, pose_3d_copy_;
 
 
     public:
@@ -162,28 +164,34 @@ void ArucoDetector::PC_process(const sensor_msgs::PointCloud2ConstPtr & pc_temp)
     pcl::PointCloud<pcl::PointXYZ> pc;
     pcl::fromROSMsg(*pc_temp, pc);
     geometry_msgs::PointStamped point_temp;
+    tf::Transformer transformer;
+    tf::Quaternion q_temp, q_br;
     if (center_.size()<1){
 	ROS_INFO("Waiting for aruco detector");
 
 	return;
 	}
     for (int i=0; i < center_.size() ; i++){
+	
         point_temp.point.x = pc.at(center_[i].point.x, center_[i].point.y).x;
         point_temp.point.y = pc.at(center_[i].point.x, center_[i].point.y).y;
         point_temp.point.z = pc.at(center_[i].point.x, center_[i].point.y).z;
+	if (isnan(point_temp.point.x) || isnan(point_temp.point.y) || isnan(point_temp.point.z) ){
+		continue;
+	}
         point_temp.header.stamp = center_[i].header.stamp;
         point_temp.header.frame_id = center_[i].header.frame_id;
-        center_3d.push_back(point_temp);   
+        center_3d.push_back(point_temp); 
+	
+	q_temp =  pose_3d_[i].getRotation(); 
+	transformer.transformQuaternion("/camera_depth_frame", q_br, q_temp, "/camera_rgb_frame" );
         pose_3d_[i].setOrigin(tf::Vector3(point_temp.point.x,point_temp.point.y,point_temp.point.z));
+        pose_3d_[i].setRotation(q_br);
         ROS_INFO("Depth Camera: \n  X: %f, Y: %f, Z: %f", point_temp.point.x,point_temp.point.y,point_temp.point.z);
-        Marker_br_.sendTransform(tf::StampedTransform(pose_3d_[i], center_[i].header.stamp, "/Marker", "/camera_rgb_frame"));	
-        
-    }
-
-    for (auto transform: pose_3d_){
-
-
-        
+	
+	
+        Marker_br_.sendTransform(tf::StampedTransform(pose_3d_[i], center_[i].header.stamp, "/Marker", "/camera_depth_frame"));	
+        pose_3d_copy_ = pose_3d_;
     }
 
 
