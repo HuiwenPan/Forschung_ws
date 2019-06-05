@@ -78,8 +78,8 @@ class ArucoDetector{
         
             distCoeffs_ = (cv::Mat_<float>(5, 1) << k1, k2, p1, p2, k3);
 
-            image_sub = nh_.subscribe("/camera/rgb/image_rect_color", 1, &ArucoDetector::Image_process, this);
-            pcl_sub = nh_.subscribe("/camera/depth_registered/points", 1, &ArucoDetector::PC_process, this);
+            image_sub = nh_.subscribe("/camera/rgb/image_rect_color", 10, &ArucoDetector::Image_process, this);
+            pcl_sub = nh_.subscribe("/camera/depth/points", 10, &ArucoDetector::PC_process, this);
         } //Constructor
 
         ~ArucoDetector(){}
@@ -109,7 +109,6 @@ void ArucoDetector::Image_process(const sensor_msgs::Image::ConstPtr& msg){
             return;
     }
 
-    namedWindow("Aruco_detector", CV_WINDOW_AUTOSIZE);
     Mat image, image_copy;
     image = cv_ptr->image;
     image.copyTo(image_copy);
@@ -136,13 +135,14 @@ void ArucoDetector::Image_process(const sensor_msgs::Image::ConstPtr& msg){
                point_temp.point.x = (markerCorners[i][0].x + markerCorners[i][1].x) /2;
                point_temp.point.y = (markerCorners[i][0].y + markerCorners[i][3].y) /2;
                center_.push_back(point_temp);
-
-               ROS_INFO("R: %f, T: %f", rvecs[i][0], tvecs[i][0]);
+	       ROS_INFO("Marker center: \n  X: %f, Y: %f",point_temp.point.x, point_temp.point.y);	
+               
                transform.setOrigin(tf::Vector3(tvecs[0][0],tvecs[0][1],tvecs[0][2]));
                tf::Quaternion q;
                q.setRPY(rvecs[0][0],rvecs[0][1],rvecs[0][2]);
                transform.setRotation(q);
                Marker_br_.sendTransform(tf::StampedTransform(transform, ros::Time::now(), "/Marker", "/camera_rgb_frame"));
+	       ROS_INFO("Aruco detctor: \n  X: %f, Y: %f, Z: %f", tvecs[0][0],tvecs[0][1],tvecs[0][2]);	
 
        }
    }
@@ -161,6 +161,10 @@ void ArucoDetector::PC_process(const sensor_msgs::PointCloud2ConstPtr & pc_temp)
     pcl::PointCloud<pcl::PointXYZ> pc;
     pcl::fromROSMsg(*pc_temp, pc);
     geometry_msgs::PointStamped point_temp;
+    if (center_.size()<1){
+	ROS_INFO("Waiting for aruco detector");
+	return;
+	}
     for (auto center: center_){
         point_temp.point.x = pc.at(center.point.x, center.point.y).x;
         point_temp.point.y = pc.at(center.point.x, center.point.y).y;
@@ -168,6 +172,8 @@ void ArucoDetector::PC_process(const sensor_msgs::PointCloud2ConstPtr & pc_temp)
         point_temp.header.stamp = center.header.stamp;
         point_temp.header.frame_id = center.header.frame_id;
         center_3d.push_back(point_temp);
+ 	ROS_INFO("Depth Camera: \n  X: %f, Y: %f, Z: %f", point_temp.point.x,point_temp.point.y,point_temp.point.z);	
+
     }
 
 
@@ -203,11 +209,9 @@ void ArucoDetector::createArucoMarkers(){
 int main(int argc, char** argv){
     
     ros::init(argc, argv, "aruco_detector");
-
-    ros::MultiThreadedSpinner spinner(3);
-    ros::NodeHandle n;  
+    ros::NodeHandle n;
     ArucoDetector aruco_detector(n);
-    spinner.spin();
+    ros::spin();
     //createArucoMarkers();
 
     return 0;    
