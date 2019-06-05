@@ -59,6 +59,8 @@ class ArucoDetector{
         ros::Subscriber pcl_sub;
         vector<geometry_msgs::PointStamped> center_;
         vector<geometry_msgs::PointStamped> center_3d;
+        vector<tf::Transform> pose_3d_;
+
 
     public:
         ArucoDetector(ros::NodeHandle n):nh_(n) {
@@ -98,15 +100,12 @@ void ArucoDetector::Image_process(const sensor_msgs::Image::ConstPtr& msg){
 
     cv_bridge::CvImagePtr cv_ptr;
 
-
-    tf::Transform transform;
-
     try{
         cv_ptr = cv_bridge::toCvCopy(msg, sensor_msgs::image_encodings::BGR8);
     }
     catch (cv_bridge::Exception& e){
-            ROS_ERROR("cv_bridge exception: %s", e.what());
-            return;
+        ROS_ERROR("cv_bridge exception: %s", e.what());
+        return;
     }
 
     Mat image, image_copy;
@@ -114,44 +113,46 @@ void ArucoDetector::Image_process(const sensor_msgs::Image::ConstPtr& msg){
     image.copyTo(image_copy);
    //imshow("image",image);
    
-   vector<int> markerIds;
-   vector< vector< Point2f > > markerCorners, rejectedCandidates;
-   Ptr<aruco::DetectorParameters> parameters = aruco::DetectorParameters::create();
-   Ptr<aruco::Dictionary> dictionary = aruco::getPredefinedDictionary(aruco::PREDEFINED_DICTIONARY_NAME::DICT_4X4_50);
-   aruco::detectMarkers(image, dictionary, markerCorners, markerIds, parameters, rejectedCandidates);
-   if(markerIds.size() > 0){
-       ROS_INFO("get markers");
-       aruco::drawDetectedMarkers(image_copy, markerCorners, markerIds);
-       std::vector<cv::Vec3d> rvecs, tvecs;
-       aruco::estimatePoseSingleMarkers(markerCorners, 0.05, cameraMatrix_, distCoeffs_, rvecs, tvecs);//求解旋转矩阵rvecs和平移矩阵tvecs
+    vector<int> markerIds;
+    vector< vector< Point2f > > markerCorners, rejectedCandidates;
+    Ptr<aruco::DetectorParameters> parameters = aruco::DetectorParameters::create();
+    Ptr<aruco::Dictionary> dictionary = aruco::getPredefinedDictionary(aruco::PREDEFINED_DICTIONARY_NAME::DICT_4X4_50);
+    aruco::detectMarkers(image, dictionary, markerCorners, markerIds, parameters, rejectedCandidates);
+    if(markerIds.size() > 0){
+        ROS_INFO("get markers");
+        aruco::drawDetectedMarkers(image_copy, markerCorners, markerIds);
+        std::vector<cv::Vec3d> rvecs, tvecs;
+        aruco::estimatePoseSingleMarkers(markerCorners, 0.05, cameraMatrix_, distCoeffs_, rvecs, tvecs);//求解旋转矩阵rvecs和平移矩阵tvecs
 
-       geometry_msgs::PointStamped point_temp;
-       center_.clear();
-       for(int i=0; i<markerIds.size(); i++){
-               aruco::drawAxis(image_copy, cameraMatrix_, distCoeffs_, rvecs[i], tvecs[i], 0.1);
+        geometry_msgs::PointStamped point_temp;
+        center_.clear();
+        pose_3d_.clear();
+        tf::Transform transform;
+        for(int i=0; i<markerIds.size(); i++){
+            aruco::drawAxis(image_copy, cameraMatrix_, distCoeffs_, rvecs[i], tvecs[i], 0.1);
 
-               point_temp.header.stamp = ros::Time::now();
-               point_temp.header.frame_id = "/Marker";
-               point_temp.point.x = (markerCorners[i][0].x + markerCorners[i][1].x) /2;
-               point_temp.point.y = (markerCorners[i][0].y + markerCorners[i][3].y) /2;
-               center_.push_back(point_temp);
-	       ROS_INFO("Marker center: \n  X: %f, Y: %f",point_temp.point.x, point_temp.point.y);	
-               
-               transform.setOrigin(tf::Vector3(tvecs[0][0],tvecs[0][1],tvecs[0][2]));
-               tf::Quaternion q;
-               q.setRPY(rvecs[0][0],rvecs[0][1],rvecs[0][2]);
-               transform.setRotation(q);
-               Marker_br_.sendTransform(tf::StampedTransform(transform, ros::Time::now(), "/Marker", "/camera_rgb_frame"));
-	       ROS_INFO("Aruco detctor: \n  X: %f, Y: %f, Z: %f", tvecs[0][0],tvecs[0][1],tvecs[0][2]);	
+            point_temp.header.stamp = ros::Time::now();
+            point_temp.header.frame_id = "/Marker";
+            point_temp.point.x = (markerCorners[i][0].x + markerCorners[i][1].x) /2;
+            point_temp.point.y = (markerCorners[i][0].y + markerCorners[i][3].y) /2;
+            center_.push_back(point_temp);
+            ROS_INFO("Marker center: \n  X: %f, Y: %f",point_temp.point.x, point_temp.point.y);	
+            
+            transform.setOrigin(tf::Vector3(tvecs[0][0],tvecs[0][1],tvecs[0][2]));
+            tf::Quaternion q;
+            q.setRPY(rvecs[0][0],rvecs[0][1],rvecs[0][2]);
+            transform.setRotation(q);
+            pose_3d_.push_back(transform);
+            ROS_INFO("Aruco detctor: \n  X: %f, Y: %f, Z: %f", tvecs[0][0],tvecs[0][1],tvecs[0][2]);	
 
-       }
-   }
-   else{
-       ROS_INFO("NO markers");
+        }
+    }
+    else{
+        ROS_INFO("NO markers");
 
-   }
-   imshow("out", image_copy);
-   waitKey(10);
+    }
+    imshow("out", image_copy);
+    waitKey(10);
     
 }
 
@@ -163,19 +164,27 @@ void ArucoDetector::PC_process(const sensor_msgs::PointCloud2ConstPtr & pc_temp)
     geometry_msgs::PointStamped point_temp;
     if (center_.size()<1){
 	ROS_INFO("Waiting for aruco detector");
+
 	return;
 	}
-    for (auto center: center_){
-        point_temp.point.x = pc.at(center.point.x, center.point.y).x;
-        point_temp.point.y = pc.at(center.point.x, center.point.y).y;
-        point_temp.point.z = pc.at(center.point.x, center.point.y).z;
-        point_temp.header.stamp = center.header.stamp;
-        point_temp.header.frame_id = center.header.frame_id;
-        center_3d.push_back(point_temp);
- 	ROS_INFO("Depth Camera: \n  X: %f, Y: %f, Z: %f", point_temp.point.x,point_temp.point.y,point_temp.point.z);	
-
+    for (int i=0; i < center_.size() ; i++){
+        point_temp.point.x = pc.at(center_[i].point.x, center_[i].point.y).x;
+        point_temp.point.y = pc.at(center_[i].point.x, center_[i].point.y).y;
+        point_temp.point.z = pc.at(center_[i].point.x, center_[i].point.y).z;
+        point_temp.header.stamp = center_[i].header.stamp;
+        point_temp.header.frame_id = center_[i].header.frame_id;
+        center_3d.push_back(point_temp);   
+        pose_3d_[i].setOrigin(tf::Vector3(point_temp.point.x,point_temp.point.y,point_temp.point.z));
+        ROS_INFO("Depth Camera: \n  X: %f, Y: %f, Z: %f", point_temp.point.x,point_temp.point.y,point_temp.point.z);
+        Marker_br_.sendTransform(tf::StampedTransform(pose_3d_[i], center_[i].header.stamp, "/Marker", "/camera_rgb_frame"));	
+        
     }
 
+    for (auto transform: pose_3d_){
+
+
+        
+    }
 
 
 }
