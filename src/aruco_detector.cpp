@@ -21,6 +21,7 @@ STD HEADER
 tf HEADER
 **************************/
 #include <tf/transform_broadcaster.h>
+#include <tf/transform_listener.h>
 #include <tf/transform_datatypes.h>
 #include <tf/tf.h>
 
@@ -135,10 +136,18 @@ void ArucoDetector::Image_process(const sensor_msgs::Image::ConstPtr& msg){
 
             point_temp.header.stamp = ros::Time::now();
             point_temp.header.frame_id = "/Marker";
-            point_temp.point.x = (markerCorners[i][0].x + markerCorners[i][1].x) /2;
-            point_temp.point.y = (markerCorners[i][0].y + markerCorners[i][3].y) /2;
+            point_temp.point.x = (markerCorners[i][0].x + markerCorners[i][2].x) /2;
+            point_temp.point.y = (markerCorners[i][0].y + markerCorners[i][2].y) /2;
+
+            // show center point
+            // cv::Point point_cv;
+            // point_cv.x = point_temp.point.x;
+            // point_cv.y = point_temp.point.y;
+            // circle(image_copy,point_cv,5,Scalar(0, 0, 255), -1);
+
+
             center_.push_back(point_temp);
-            ROS_INFO("Marker center: \n  X: %f, Y: %f",point_temp.point.x, point_temp.point.y);	
+            //ROS_INFO("Marker center: \n  X: %f, Y: %f",point_temp.point.x, point_temp.point.y);	
             
             transform.setOrigin(tf::Vector3(tvecs[0][0],tvecs[0][1],tvecs[0][2]));
             tf::Quaternion q;
@@ -164,13 +173,12 @@ void ArucoDetector::PC_process(const sensor_msgs::PointCloud2ConstPtr & pc_temp)
     pcl::PointCloud<pcl::PointXYZ> pc;
     pcl::fromROSMsg(*pc_temp, pc);
     geometry_msgs::PointStamped point_temp;
-    tf::Transformer transformer;
-    tf::Stamped<tf::Quaternion> q_temp, q_br;
+    tf::TransformListener transformer;
+    tf::Stamped<tf::Point> p_temp, p_br;
     if (center_.size()<1){
-	ROS_INFO("Waiting for aruco detector");
-
-	return;
-	}
+	  ROS_INFO("Waiting for aruco detector");
+    	return;
+  	}
     for (int i=0; i < center_.size() ; i++){
 	
         point_temp.point.x = pc.at(center_[i].point.x, center_[i].point.y).x;
@@ -183,14 +191,16 @@ void ArucoDetector::PC_process(const sensor_msgs::PointCloud2ConstPtr & pc_temp)
         point_temp.header.frame_id = center_[i].header.frame_id;
         center_3d.push_back(point_temp); 
         
-        q_temp.setData(pose_3d_[i].getRotation()); 
-        q_temp.stamp_ = ros::Time::now();
-        q_temp.frame_id_ = "/camera_rgb_frame";
-        transformer.transformQuaternion("/camera_depth_frame", q_br, q_temp );
+        // p_temp.stamp_ = ros::Time(0);
+        // p_temp.frame_id_ = "camera_depth_frame";
+        // p_temp.setData(tf::Vector3(point_temp.point.x,point_temp.point.y,point_temp.point.z));
+        // ROS_INFO("LALALA");
+        // transformer.transformPoint("camera_link", p_br, p_temp);
+        //ROS_INFO("VVVVVVV");
         pose_3d_[i].setOrigin(tf::Vector3(point_temp.point.x,point_temp.point.y,point_temp.point.z));
-        pose_3d_[i].setRotation(q_br);
         ROS_INFO("Depth Camera: \n  X: %f, Y: %f, Z: %f", point_temp.point.x,point_temp.point.y,point_temp.point.z);
-        Marker_br_.sendTransform(tf::StampedTransform(pose_3d_[i], center_[i].header.stamp, "/Marker", "/camera_depth_frame"));	
+
+        Marker_br_.sendTransform(tf::StampedTransform(pose_3d_[i], center_[i].header.stamp, "Marker", "camera_rgb_frame"));	
         pose_3d_copy_ = pose_3d_;
     }
 
@@ -238,3 +248,6 @@ int main(int argc, char** argv){
 
 
 }
+
+
+
